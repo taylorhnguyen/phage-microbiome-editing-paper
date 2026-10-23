@@ -8,6 +8,7 @@ clc;
 cd('/Users/taynguyen/Dropbox/_phage/github_upload/2-scripts/')
 
 %%  load master variables
+
 tay4_color = [201, 148, 199] / 255;
 kp_color = [223,101,176] ./ 255;
 cocktail_color = [233,14,139] ./ 255;
@@ -534,6 +535,12 @@ fname = "../3-figs/isols_tay4_cocktail_ordered_lagtime_tay4";
 print(gcf, strcat(fname, '.png'),'-dpng','-r300');
 print(gcf, strcat(fname, '.svg'),'-dsvg','-r300');
 
+%% figure s3a
+% Ef CFUs
+
+%% figure s3b
+% final OD of SICs +/- Tay4
+
 %% figure 1d
 % SICs + Tay4 (MOI~1) for passages 1-6
 % plot Ef and Kp relative abundance
@@ -670,6 +677,175 @@ fname = "../3-figs/fig1/Entero_ASV_relab_tay4";
 print(gcf, strcat(fname, '.png'),'-dpng','-r300');
 print(gcf, strcat(fname, '.svg'),'-dsvg','-r300');
 
+%% figure s3c
+% ASV changes during SIC + Tay4 treatment
+
+% load 16s ASV relative abundance table
+load("../1-data/fig1_240108_SIC_Ef_resistance_ASV_table.mat", "SIC_res_ASV_relab_table")
+
+% load ASV DADA2 taxa
+load("../1-data/fig1_240108_SIC_Ef_resistance_ASV_taxa.mat", "SIC_res_ASV_taxa")
+
+
+SIC_shift = [0:12:84];
+lw = 1.;
+SIC_names = {"Ef mono", "15mb", "15mb + Kp", "SD1", "SD2", "MD1", "MD2"};
+
+for s = 4:7 % iterate through 4 SICs
+
+    % initialize values
+    d = [];
+    d_norm = [];
+    asvs_up = {};
+    asvs_down = {};
+
+    % first get all asvs to keep
+    idx2plot_control = [SIC_shift(s)+1:SIC_shift(s)+3] +96*5;
+    idx2plot_tay4 = [SIC_shift(s)+4:SIC_shift(s)+6] +96*5;
+    idx2plot = [idx2plot_control, idx2plot_tay4];
+
+    data2plot = SIC_res_ASV_relab_table(idx2plot,:);
+    asvs2plot = find(any(data2plot, 1));
+    asvs = SIC_res_ASV_taxa(asvs2plot)';
+    n = length(asvs2plot);
+
+    % plot the mean of passage 7
+    % get control
+    temp = SIC_res_ASV_relab_table(idx2plot_control, asvs2plot);
+    d(1,:) = mean(temp);
+
+    % get ef-knockout
+    temp = SIC_res_ASV_relab_table(idx2plot_tay4, asvs2plot);
+    d(2,:) = mean(temp);
+    d(d < 0.001) = 0.001; % pseudo value for normalization
+    d_norm = d(2,:) ./ d(1,:); % get fold-change
+
+    % plot full bar
+    figure
+    x_rect = [-1 n+1 n+1 -1]; % Horizontal range
+    y_rect = [0.5 0.5 2 2]; % Vertical range (replace y_min and y_max)
+
+    % Create the gray patch/fill
+    hp = patch(x_rect, y_rect, [0.8 0.8 0.8], 'linestyle', 'none');
+    hold all;
+
+    b = bar(1:n, d_norm, 'FaceColor', 'flat');
+    hold all;
+    b.BaseValue = 1;
+
+    for i = 1:n
+        asv = asvs(i);
+        fam = split(asv, ";g");
+
+        if fam{1}(end-5:end) == ';NA;NA'
+            fam = split(asv, ";NA;NA");
+            color2plot = colors_kat{5}(strcmp(fam(1),OTUs_kat{5}),:); % finds the color code in kat's list of OTUs
+
+        else
+            fam = split(asv, ";g");
+            color2plot = colors_kat{5}(strcmp(fam(1),OTUs_kat{5}),:); % finds the color code in kat's list of OTUs
+        end
+
+        if asv{1}(end-8:end) == ';NA;NA;NA'
+            color2plot = [189,189,189] ./ 256;
+        end
+
+        b.CData(i,:)=color2plot;
+    end
+
+    % other figure stuff
+    ylabel('Fold-change (+Tay4 vs SIC)')
+    set(gca,'YScale','log')
+    xticklabels([])
+    yticks([10^-2 10^-1 10^0 10^1 10^2])
+    set(gca,'FontSize',10);
+    ylim([10^-3 10^3])
+    xlim([0 n+1])
+    box on
+
+    % find statistically significant asvs that are enriched or depleted
+    % only pull the sig ASVs that are >2 fold or <0.5 fold
+
+    p_vals = [];
+    q_vals = [];
+    asvs_up = {};
+    asvs_down = {};
+
+    for i = 1:n
+
+        % get replicate data for each ASV
+        dd = [];
+        dd(1,:) = SIC_res_ASV_relab_table(idx2plot_control, asvs2plot(i)); % get control
+        dd(2,:)  = SIC_res_ASV_relab_table(idx2plot_tay4, asvs2plot(i));   % get tay4-treated
+
+        % wilcoxon has a floor because I only have 3 replicates
+        [h, p_vals(i)] = ttest2(dd(1,:), dd(2,:));
+    end
+
+    % apply benjamini-hochberg (BH) correction
+    q_vals = mafdr(p_vals, 'BHFDR', true);
+
+    asvs2test_up = find(d_norm > 2);
+    asvs2test_down = find(d_norm < 0.5);
+
+    % get the enriched/depleted species
+    for i = 1:n
+        dd = [];
+        dd(1,:) = SIC_res_ASV_relab_table(idx2plot_control, asvs2plot(i)); % get control
+        dd(2,:)  = SIC_res_ASV_relab_table(idx2plot_tay4, asvs2plot(i));         % get tay4-treated
+
+
+        % get the enriched ones
+        if d_norm(i) > 2
+            if q_vals(i) <= 0.05
+
+                % black star: 2-fold increase, statistically significant
+                asvs_up{1,i} = asvs{i};
+                text(i, d_norm(i)+0.1*d_norm(i), "*", 'Color', 'black', 'FontSize', 14);
+            end
+
+            if dd(1,1) <= 0.001 & dd(1,2) <= 0.001 & dd(1,3) <= 0.001 & ...
+                dd(2,1) >= 0.001 & dd(2,2) >= 0.001 & dd(2,3) >= 0.001
+
+                % if all 3 replicates are below the limit of detection
+                % red dot: 2-fold increase and emergent (not present in untreated
+                % community)
+                asvs_up{2,i} = asvs{i};
+                text(i, d_norm(i)+0.5*d_norm(i), ".", 'Color', 'red', 'FontSize', 30);
+            end
+        end
+
+        % get the depleted ones
+        if d_norm(i) < 0.5
+            if q_vals(i) <=0.05
+
+                % black star: 2-fold decrease, statistically significant
+                asvs_down{1,i} = asvs{i};
+                text(i, d_norm(i)-0.1*d_norm(i), "*", 'Color', 'black', 'FontSize', 14);
+            end
+
+            if dd(2,1) <= 0.001 & dd(2,2) <= 0.001 & dd(2,3) <= 0.001 & ...
+                    dd(1,1) >= 0.001 & dd(1,2) >= 0.001 & dd(1,3) >= 0.001
+
+                % if all 3 replicates are below the limit of detection
+                % red dot: 2-fold increase and emergent (not present in untreated
+                % community)
+                asvs_down{2,i} = asvs{i};
+                text(i, d_norm(i)-0.5*d_norm(i), ".", 'Color', 'red', 'FontSize', 30);
+            end
+        end
+    end
+
+    % save figure
+    w=4;
+    h=2;
+    set(gcf, 'Units', 'Inches', 'Position', [0, 0, w, h], 'PaperUnits', 'Inches', 'PaperSize', [w, h])
+
+    fname = strcat("../3-figs/supp/", SIC_names{s}, "_ASV_foldchange_avg_pass6");
+    print(gcf, strcat(fname, '.png'),'-dpng','-r300');
+    print(gcf, strcat(fname, '.svg'),'-dsvg','-r300');
+end
+
 %% figure 1e
 % compare ef and kp metabolomics
 
@@ -802,7 +978,6 @@ print(gcf, strcat(fname, '.svg'),'-dsvg','-r300');
 
 % load 16S data
 load("../1-data/fig1_210114_niche_test_15mb_ASV_relab.mat", "niche_test_15mb_ASV_relab"); % relative abundance data
-load("../1-data/fig1_210114_niche_test_15mb_ASV_raw_reads.mat", "niche_test_15mb_raw_reads"); % all raw reads (organized by sample number listed in NCBI sample name)
 load("../1-data/fig1_210114_niche_test_15mb_ASV_DADA2_taxa.mat", "niche_test_15mb_ASV_taxa") % DADA2 ASV names
 
 pass_shift = [0, 96, 192];
@@ -844,12 +1019,8 @@ for p = 1:3
     end
 
     barplotconnect(data2plot_sort(:,:),1:length(idx2plot),colors,0,-1,0);
-
-    %bar(data2plot_sort, 'stacked');
-    %axis square
     xticklabels([])
     ylabel('Relative abundance')
-    %set(gca,'FontSize',18);
 
     % save figure
     w=2.5;
@@ -857,6 +1028,65 @@ for p = 1:3
     set(gcf, 'Units', 'Inches', 'Position', [0, 0, w, h], 'PaperUnits', 'Inches', 'PaperSize', [w, h])
 
     fname = strcat("../3-figs/fig1/niche_test_15mb_Eftitration_pass", string(p));
+    print(gcf, strcat(fname, '.png'),'-dpng','-r300');
+    print(gcf, strcat(fname, '.svg'),'-dsvg','-r300');
+
+end
+
+%% figure s3d
+% niche test: 14 mb SIC + Ef titration + Tay4
+
+% load 16S data
+load("../1-data/fig1_210114_niche_test_15mb_ASV_relab.mat", "niche_test_15mb_ASV_relab"); % relative abundance data
+load("../1-data/fig1_210114_niche_test_15mb_ASV_DADA2_taxa.mat", "niche_test_15mb_ASV_taxa") % DADA2 ASV names
+
+pass_shift = [0, 96, 192];
+
+for p = 1:3 % plot all passages
+
+    idx2plot = [37, 46:-1:38] + pass_shift(p);
+    data2plot = niche_test_15mb_ASV_relab(idx2plot,:); % rel abundance
+    asvs2plot = find(any(data2plot>0,1)); % finds the families that have relative abundance >0 to plot only these
+
+    % order by family
+    t = niche_test_15mb_ASV_taxa(asvs2plot)';
+    [asvs, asvs2plot_sort] = sort(t);
+    asvs = flip(asvs);
+    asvs2plot_sort = flip(asvs2plot_sort);
+    data2plot_filt = data2plot(:,asvs2plot);
+    data2plot_sort = data2plot_filt(:,asvs2plot_sort);
+
+    for i = 1:length(asvs)
+        asv = asvs(i);
+        fam = split(asv, ";g");
+        color2plot = colors_kat{5}(strcmp(fam(1),OTUs_kat{5}),:); % finds the color code in kat's list of OTUs
+
+        if isempty(color2plot)==0
+            colors(i,:) = color2plot;
+
+        elseif strcmp(asv, "k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;NA;NA;NA")==1
+            x = "k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Lachnospiraceae";
+            color2plot = colors_kat{5}(strcmp(x, OTUs_kat{5}),:); % finds the color code in kat's list of OTUs
+            colors(i,:) = color2plot;
+
+        else
+            fam=split(asv, ";NA;NA");
+            color2plot = colors_kat{5}(strcmp(fam(1),OTUs_kat{5}),:); % finds the color code in kat's list of OTUs
+            colors(i,:) = color2plot;
+
+        end
+    end
+
+    barplotconnect(data2plot_sort(:,:),1:length(idx2plot),colors,0,-1,0);
+    xticklabels([])
+    ylabel('Relative abundance')
+
+    % save figure
+    w=2.5;
+    h=1.75;
+    set(gcf, 'Units', 'Inches', 'Position', [0, 0, w, h], 'PaperUnits', 'Inches', 'PaperSize', [w, h])
+
+    fname = strcat("../3-figs/supp/niche_test_15mb_Eftitration_Tay4_pass", string(p));
     print(gcf, strcat(fname, '.png'),'-dpng','-r300');
     print(gcf, strcat(fname, '.svg'),'-dsvg','-r300');
 
